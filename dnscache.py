@@ -27,6 +27,8 @@
 DEPENDENCIES:
     construct (pdbparse dependency)
     pdbparse
+    requests
+    cabextract (system utility)
 
 REFERENCES:
     [1] Cohen, M. (2014). The Windows User mode heap and the DNS resolver cache.
@@ -44,12 +46,24 @@ REFERENCES:
           https://github.com/volatilityfoundation/volatility/issues/201
 """
 
+import os
+import pdbparse
+import pdbparse.peinfo
+import shutil
 import volatility.debug as debug
 import volatility.plugins.common as common
 import volatility.utils as utils
 import volatility.win32 as win32
-import pdbparse
-import pdbparse.peinfo
+
+candownload = False
+try:
+    import requests
+    candownload = True
+except ImportError:
+    debug.info("Missing python library requests. You need to manually provide .PDB file")
+
+
+SYMBOL_SERVER = "http://msdl.microsoft.com/download/symbols"
 
 
 class DNSCache(common.AbstractWindowsCommand):
@@ -58,6 +72,13 @@ class DNSCache(common.AbstractWindowsCommand):
     def __init__(self, config, *args, **kwargs):
 
         common.AbstractWindowsCommand.__init__(self, config, *args, **kwargs)
+
+        config.add_option('PROXY_SERVER',  default = None,
+                          help = 'Use this proxy to download .PDB file',
+                          action = 'store')
+        config.add_option('DUMP_DIR', short_option = 'D', default = None,
+                          help = 'Dump directory for .PDB file',
+                          action = 'store')
 
     def _find_dns_resolver(self, ps_list):
 
@@ -97,6 +118,33 @@ class DNSCache(common.AbstractWindowsCommand):
 
         debug.info("Found no RSDS")
 
+    def _download_pdb_file(self, guid, filename):
+
+        archive = filename[:-1] + "_"
+        url = "{0}/{1}/{2}/{3}".format(SYMBOL_SERVER, filename, guid, archive)
+
+        debug.info("Download URL .PDB file: {0}".format(url))
+
+        if not candownload:
+            debug.info("Manually provide the above resource with the --pdb-file option")
+            return
+
+        proxies = None
+        if self._config.PROXY_SERVER:
+            proxies = {
+                    'http': self._config.PROXY_SERVER,
+                    'https': self._config.PROXY_SERVER
+                    }
+
+        resp = requests.get(url, proxies=proxies, stream=True)
+
+        if resp.status_code != 200:
+            debug.info("Unable to download {0} (response code: {1})".format(url, resp.get_code()))
+            return
+
+        with open(os.path.join(self._config.DUMP_DIR, archive), "wb") as af:
+            shutil.copyfileobj(resp.raw, af)
+
     def calculate(self):
 
         address_space = utils.load_as(self._config)
@@ -106,9 +154,14 @@ class DNSCache(common.AbstractWindowsCommand):
 
             debug.info("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
             guid, pdb = self._get_debug_symbols(proc.get_process_address_space(), mod)
+            pdb_file = self._download_pdb_file(guid, pdb)
             yield guid, pdb
 
     def render_text(self, outfd, data):
+
+        if self._config.DUMP_DIR == None:
+            debug.error("Please specify a dump directory (--dump_dir)")
+
         outfd.write("DEBUG!***\n")
         for guid, pdb in data:
             outfd.write("DEBUG -- GUID: {0}, PDB: {1}\n".format(guid, pdb))
