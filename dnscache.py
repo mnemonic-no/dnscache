@@ -183,6 +183,7 @@ class DNSCache(common.AbstractWindowsCommand):
 
         g_HashTable_p = 0
         g_HashTableSize_p = 0
+        g_CacheHeap_p = 0
 
         for sym in pdb.STREAM_GSYM.globals:
             if sym.name == "g_HashTable":
@@ -193,8 +194,12 @@ class DNSCache(common.AbstractWindowsCommand):
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTableSize_p = imgbase+omap.remap(off+virt_base)
+            if sym.name == "g_CacheHeap":
+                off = sym.offset
+                virt_base = sects[sym.segment-1].VirtualAddress
+                g_CacheHeap_p = imgbase+omap.remap(off+virt_base)
 
-        return g_HashTable_p, g_HashTableSize_p
+        return g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p
 
     def calculate(self):
 
@@ -204,11 +209,17 @@ class DNSCache(common.AbstractWindowsCommand):
         for proc, mod in self._find_dns_resolver(ps_list):
 
             debug.info("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
+
             guid, pdb = self._get_debug_symbols(proc.get_process_address_space(), mod)
             pdb_file = self._download_pdb_file(guid, pdb)
             debug.info("Using PDB: {0}".format(pdb_file))
-            g_HashTable_p, g_HashTableSize_p = self._hash_info(pdb_file, mod.DllBase)
-            debug.info("g_HashTable: {0}, g_HashTableSize: {1}".format(hex(g_HashTable_p), hex(g_HashTableSize_p)))
+
+            g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p = self._hash_info(pdb_file, mod.DllBase)
+            debug.info("DllBase:         {0}".format(hex(mod.DllBase)))
+            debug.info("g_CacheHeap:     {0}".format(hex(g_CacheHeap_p)))
+            debug.info("g_HashTable:     {0}".format(hex(g_HashTable_p)))
+            debug.info("g_HashTableSize: {0}".format(hex(g_HashTableSize_p)))
+
             yield guid, pdb
 
     def render_text(self, outfd, data):
