@@ -63,9 +63,6 @@ except ImportError:
     debug.info("Missing python library requests. You need to manually provide .PDB file")
 
 
-SYMBOL_SERVER = "http://msdl.microsoft.com/download/symbols"
-
-
 class DNSCache(common.AbstractWindowsCommand):
     """Volatility plugin to extract the Windows DNS cache"""
 
@@ -79,6 +76,8 @@ class DNSCache(common.AbstractWindowsCommand):
         config.add_option('DUMP_DIR', short_option = 'D', default = None,
                           help = 'Dump directory for .PDB file',
                           action = 'store')
+        config.add_option("SYMBOLS", default="http://msdl.microsoft.com/download/symbols",
+                          help = "Server to download .PDB file from", action = 'store')
 
     def _find_dns_resolver(self, ps_list):
 
@@ -121,7 +120,7 @@ class DNSCache(common.AbstractWindowsCommand):
     def _download_pdb_file(self, guid, filename):
 
         archive = filename[:-1] + "_"
-        url = "{0}/{1}/{2}/{3}".format(SYMBOL_SERVER, filename, guid, archive)
+        url = "{0}/{1}/{2}/{3}".format(self._config.SYMBOLS, filename, guid, archive)
 
         debug.info("Download URL .PDB file: {0}".format(url))
 
