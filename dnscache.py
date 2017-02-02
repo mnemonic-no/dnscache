@@ -129,10 +129,10 @@ class DNSCache(common.AbstractWindowsCommand):
         debug_dir = mod.get_debug_directory()
 
         if not self._is_valid_debug_dir(debug_dir, image_base, addr_space):
-            debug.info("Invalid debug dir {0} {1} {2}".format(hex(debug_dir.v()), hex(image_base.v()), hex(addr_space.v())))
+            debug.info("Invalid debug dir {0:#x} {1:#x} {2:#x}".format(debug_dir.v(), image_base.v(), addr_space.v()))
             return
 
-        debug.info("Found debug_dir: {0}, image_base: {1}".format(hex(debug_dir.v()), hex(image_base.v())))
+        debug.info("Found debug_dir: {0:#x}, image_base: {1:#x}".format(debug_dir.v(), image_base.v()))
         debug_data = addr_space.zread(image_base + debug_dir.AddressOfRawData, debug_dir.SizeOfData)
         if debug_data[:4] == 'RSDS':
             return pdbparse.peinfo.get_rsds(debug_data)
@@ -215,10 +215,10 @@ class DNSCache(common.AbstractWindowsCommand):
             debug.info("Using PDB: {0}".format(pdb_file))
 
             g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p = self._hash_info(pdb_file, mod.DllBase)
-            debug.info("DllBase:         {0}".format(hex(mod.DllBase)))
-            debug.info("g_CacheHeap:     {0}".format(hex(g_CacheHeap_p)))
-            debug.info("g_HashTable:     {0}".format(hex(g_HashTable_p)))
-            debug.info("g_HashTableSize: {0}".format(hex(g_HashTableSize_p)))
+            debug.info("DllBase:         {0:#x}".format(mod.DllBase))
+            debug.info("g_CacheHeap:     {0:#x}".format(g_CacheHeap_p))
+            debug.info("g_HashTable:     {0:#x}".format(g_HashTable_p))
+            debug.info("g_HashTableSize: {0:#x}".format(g_HashTableSize_p))
 
             yield guid, pdb
 
