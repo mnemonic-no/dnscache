@@ -50,6 +50,7 @@ import os
 import pdbparse
 import pdbparse.peinfo
 import shutil
+import subprocess
 import volatility.debug as debug
 import volatility.plugins.common as common
 import volatility.utils as utils
@@ -64,7 +65,22 @@ except ImportError:
 
 
 class DNSCache(common.AbstractWindowsCommand):
-    """Volatility plugin to extract the Windows DNS cache"""
+    """Volatility plugin to extract the Windows DNS cache
+
+    Options:
+    --proxy_server=PROXY_SERVER
+                        Use this proxy to download .PDB file
+    -D DUMP_DIR, --dump_dir=DUMP_DIR
+                        Dump directory for .PDB file
+    --symbols=http://msdl.microsoft.com/download/symbols
+                        Server to download .PDB file from
+    --pdb_file=PDB_FILE
+                        Allows you to download the .PDB file off system and
+                        provide the reference on the command line
+    --cabextract=cabextract
+                        Provide path to the cabextract system utility
+
+    """
 
     def __init__(self, config, *args, **kwargs):
 
@@ -78,6 +94,12 @@ class DNSCache(common.AbstractWindowsCommand):
                           action = 'store')
         config.add_option("SYMBOLS", default="http://msdl.microsoft.com/download/symbols",
                           help = "Server to download .PDB file from", action = 'store')
+        config.add_option("PDB_FILE", default = None,
+                          help = "Allows you to download the .PDB file off system and provide the reference on the command line",
+                          action = "store")
+        config.add_option("CABEXTRACT", default = "cabextract",
+                          help = "Provide path to the cabextract system utility",
+                          action = "store")
 
     def _find_dns_resolver(self, ps_list):
 
@@ -119,6 +141,9 @@ class DNSCache(common.AbstractWindowsCommand):
 
     def _download_pdb_file(self, guid, filename):
 
+        if self._config.PDB_FILE:
+            return self._config.PDB_FILE
+
         archive = filename[:-1] + "_"
         url = "{0}/{1}/{2}/{3}".format(self._config.SYMBOLS, filename, guid, archive)
 
@@ -141,8 +166,35 @@ class DNSCache(common.AbstractWindowsCommand):
             debug.info("Unable to download {0} (response code: {1})".format(url, resp.get_code()))
             return
 
-        with open(os.path.join(self._config.DUMP_DIR, archive), "wb") as af:
+        archive_path = os.path.join(self._config.DUMP_DIR, archive)
+
+        with open(archive_path, "wb") as af:
             shutil.copyfileobj(resp.raw, af)
+
+        subprocess.call([self._config.CABEXTRACT, archive_path, "-d", self._config.DUMP_DIR])
+
+        return os.path.join(self._config.DUMP_DIR, filename)
+
+    def _hash_info(self, pdbfile, imgbase=0):
+
+        pdb = pdbparse.parse("/home/geir/dnsrslvr.pdb")
+        sects = pdb.STREAM_SECT_HDR_ORIG.sections
+        omap = pdb.STREAM_OMAP_FROM_SRC
+
+        g_HashTable_p = 0
+        g_HashTableSize_p = 0
+
+        for sym in pdb.STREAM_GSYM.globals:
+            if sym.name == "g_HashTable":
+                off = sym.offset
+                virt_base = sects[sym.segment-1].VirtualAddress
+                g_HashTable_p = imgbase+omap.remap(off+virt_base)
+            if sym.name == "g_HashTableSize":
+                off = sym.offset
+                virt_base = sects[sym.segment-1].VirtualAddress
+                g_HashTableSize_p = imgbase+omap.remap(off+virt_base)
+
+        return g_HashTable_p, g_HashTableSize_p
 
     def calculate(self):
 
@@ -154,11 +206,14 @@ class DNSCache(common.AbstractWindowsCommand):
             debug.info("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
             guid, pdb = self._get_debug_symbols(proc.get_process_address_space(), mod)
             pdb_file = self._download_pdb_file(guid, pdb)
+            debug.info("Using PDB: {0}".format(pdb_file))
+            g_HashTable_p, g_HashTableSize_p = self._hash_info(pdb_file)
+            debug.info("g_HashTable: {0}, g_HashTableSize: {1}".format(hex(g_HashTable_p), hex(g_HashTableSize_p)))
             yield guid, pdb
 
     def render_text(self, outfd, data):
 
-        if self._config.DUMP_DIR == None:
+        if self._config.DUMP_DIR == None and self._config.PDB_FILE == None:
             debug.error("Please specify a dump directory (--dump_dir)")
 
         outfd.write("DEBUG!***\n")
