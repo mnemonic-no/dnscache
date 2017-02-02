@@ -207,7 +207,7 @@ class DNSCache(common.AbstractWindowsCommand):
             guid, pdb = self._get_debug_symbols(proc.get_process_address_space(), mod)
             pdb_file = self._download_pdb_file(guid, pdb)
             debug.info("Using PDB: {0}".format(pdb_file))
-            g_HashTable_p, g_HashTableSize_p = self._hash_info(pdb_file)
+            g_HashTable_p, g_HashTableSize_p = self._hash_info(pdb_file, mod.DllBase)
             debug.info("g_HashTable: {0}, g_HashTableSize: {1}".format(hex(g_HashTable_p), hex(g_HashTableSize_p)))
             yield guid, pdb
 
