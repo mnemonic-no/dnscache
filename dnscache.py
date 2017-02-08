@@ -303,7 +303,7 @@ class DNSCache(common.AbstractWindowsCommand):
                 entry = obj.Object("_DNS_HASHTABLE_ENTRY", offset = p, vm = proc_as)
                 if entry.Name:
                     #cache_name = obj.Object("_LONG_UNICODE_STRING", offset = entry.Name.v(), vm = proc_as)
-                    print "{0:#x} : {1}".format(entry.Name, memstring(entry.Name))
+                    print "{0:#x} : {1}".format(entry.Name, memstring(offset = entry.Name, vm = proc_as))
 
             yield guid, pdb
 
@@ -408,13 +408,13 @@ DNSType = {
     "ANY": 0x00ff
 }
 
-def memstring(addr):
+def memstring(offset = 0, proc_as = None):
     mstr = ""
     while True:
-        w = proc_as.read(addr, 2)
+        w = proc_as.read(offset, 2)
         if w == "\x00\x00": return mstr
         mstr += w
-        addr += 2
+        offset += 2
 
 
 class NoPDBFileException(Exception):
