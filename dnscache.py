@@ -408,10 +408,10 @@ DNSType = {
     "ANY": 0x00ff
 }
 
-def memstring(offset = 0, proc_as = None):
+def memstring(offset = 0, vm = None):
     mstr = ""
     while True:
-        w = proc_as.read(offset, 2)
+        w = vm.read(offset, 2)
         if w == "\x00\x00": return mstr
         mstr += w
         offset += 2
