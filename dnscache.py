@@ -52,6 +52,7 @@ import pdbparse.peinfo
 import shutil
 import subprocess
 import volatility.debug as debug
+import volatility.obj as obj
 import volatility.plugins.common as common
 import volatility.utils as utils
 import volatility.win32 as win32
@@ -63,6 +64,42 @@ try:
 except ImportError:
     debug.info("Missing python library requests. You need to manually provide .PDB file")
 
+dnstypes = {
+        '_DNS_RECORD_FLAGS' : [ 4, {
+            'Section'         : [ 0, ['BitField', dict(start_bit = 0, end_bit = 2)]],
+            'Delete'          : [ 0, ['BitField', dict(start_bit = 2, end_bit = 3)]],
+            'CharSet'         : [ 0, ['BitField', dict(start_bit = 3, end_bit = 5)]],
+            'Unused'          : [ 0, ['BitField', dict(start_bit = 5, end_bit = 8)]],
+            'Reserved'        : [ 0, ['BitField', dict(start_bit = 8, end_bit = 32)]],
+            } ],
+
+        '_DNS_RECORD' : [ None, {
+            'pNext'       : [ 0x00, ['pointer', ['_DNS_RECORD']]],
+            'pName'       : [ 0x04, ['pointer', ['unsigned short']]],
+            'wType'       : [ 0x08, ['unsigned short']],
+            'wDataLength' : [ 0x0a, ['unsigned short']],
+            'Flags'       : [ 0x0c, ['_DNS_RECORD_FLAGS']],
+            'dwTtl'       : [ 0x10, ['unsigned long']],
+            'dwReserved'  : [ 0x14, ['unsigned long']],
+            'Data'        : [ 0x18, ['unsigned long']], # this can be various size, depends on datalength
+            } ]
+        }
+
+dns_hashtable_entry = {
+        '_DNS_HASHTABLE_ENTRY' : [ 0x1c, {
+            'List'   : [ 0x00, ['pointer', ['_LIST_ENTRY']]],
+            'Name'   : [ 0x08, ['pointer', ['_UNICODE_STRING']]],
+            'Record' : [ 0x18, ['pointer', ['_DNS_RECORD']]],
+            }]
+        }
+
+win10_dns_hashtable_entry = {
+        '_DNS_HASHTABLE_ENTRY' : [ 0x5c, {
+            'List'   : [ 0x08, ['pointer', ['_LIST_ENTRY']]],
+            'Name'   : [ 0x38, ['pointer', ['_LARGE_UNICODE_STRING']]],
+            'Record' : [ 0x58, ['pointer', ['_DNS_RECORD']]],
+            }]
+        }
 
 class DNSCache(common.AbstractWindowsCommand):
     """Volatility plugin to extract the Windows DNS cache
@@ -175,9 +212,24 @@ class DNSCache(common.AbstractWindowsCommand):
 
         return os.path.join(self._config.DUMP_DIR, filename)
 
+    def _get_pdb_filename(self):
+        if self._config.PDB_FILE:
+            return self._config.PDB_FILE
+        if self._config.DUMP_DIR:
+            return os.path.join(self._config.DUMP_DIR, "dnsrslvr.pdb")
+        raise NoPDBFileException("Unable to provide PDB file name.")
+
     def _hash_info(self, pdbfile, imgbase=0):
 
-        pdb = pdbparse.parse("/home/geir/dnsrslvr.pdb")
+        def _sym_name(sym):
+            try:
+                return sym.name
+            except AttributeError:
+                return ""
+
+        pdb_file_name = self._get_pdb_filename()
+        debug.info("Using PDB file: {0}".format(pdb_file_name))
+        pdb = pdbparse.parse(self._get_pdb_filename())
         sects = pdb.STREAM_SECT_HDR_ORIG.sections
         omap = pdb.STREAM_OMAP_FROM_SRC
 
@@ -186,15 +238,16 @@ class DNSCache(common.AbstractWindowsCommand):
         g_CacheHeap_p = 0
 
         for sym in pdb.STREAM_GSYM.globals:
-            if sym.name == "g_HashTable":
+            if _sym_name(sym) == "g_HashTable":
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTable_p = imgbase+omap.remap(off+virt_base)
-            if sym.name == "g_HashTableSize":
+            if _sym_name(sym) == "g_HashTableSize":
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTableSize_p = imgbase+omap.remap(off+virt_base)
-            if sym.name == "g_CacheHeap":
+                debug.info("Found hashtable size: {0}".format(off))
+            if _sym_name(sym) == "g_CacheHeap":
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_CacheHeap_p = imgbase+omap.remap(off+virt_base)
@@ -205,20 +258,52 @@ class DNSCache(common.AbstractWindowsCommand):
 
         address_space = utils.load_as(self._config)
         ps_list = win32.tasks.pslist(address_space)
+        address_space.profile.add_types(dnstypes)
+        address_space.profile.add_types(win10_dns_hashtable_entry)
 
         for proc, mod in self._find_dns_resolver(ps_list):
 
             debug.info("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
 
-            guid, pdb = self._get_debug_symbols(proc.get_process_address_space(), mod)
+            proc_as = proc.get_process_address_space()
+            guid, pdb = self._get_debug_symbols(proc_as, mod)
             pdb_file = self._download_pdb_file(guid, pdb)
             debug.info("Using PDB: {0}".format(pdb_file))
 
-            g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p = self._hash_info(pdb_file, mod.DllBase)
+            image_base_address = int(proc.Peb.m("ImageBaseAddress"))
+            g_HashTable_offset, g_HashTableSize_offset, g_CacheHeap_offset = self._hash_info(pdb_file, mod.DllBase)
             debug.info("DllBase:         {0:#x}".format(mod.DllBase))
-            debug.info("g_CacheHeap:     {0:#x}".format(g_CacheHeap_p))
-            debug.info("g_HashTable:     {0:#x}".format(g_HashTable_p))
-            debug.info("g_HashTableSize: {0:#x}".format(g_HashTableSize_p))
+            debug.info("Offset g_CacheHeap:     {0:#x}".format(g_CacheHeap_offset))
+            debug.info("Offset g_HashTable:     {0:#x}".format(g_HashTable_offset))
+
+            g_HashTableSize = obj.Object('unsigned int', offset = g_HashTableSize_offset, vm = proc_as)
+
+            debug.info("g_HashTableSize: {0:#x}".format(g_HashTableSize))
+
+            g_CacheHeap_p = obj.Object("Pointer", offset = g_CacheHeap_offset, vm = proc_as)
+            g_HashTable_p = obj.Object("Pointer", offset = g_HashTable_offset, vm = proc_as)
+
+            debug.info("g_CacheHeap_p: {0:#x}".format(g_CacheHeap_p.v()))
+            debug.info("g_HashTable_p: {0:#x}".format(g_HashTable_p.v()))
+
+            dnscache = obj.Object("Array", targetType="Pointer", count = g_HashTableSize + 1, offset = g_HashTable_p, vm = proc_as)
+            lastNull = False
+            c = 0
+            for p in dnscache:
+                if p == 0 and not lastNull:
+                    print "{0:#x}".format(p)
+                    lastNull = True
+                elif p == 0 and lastNull:
+                    c += 1
+                else:
+                    print "*", c
+                    c = 0
+                    lastNull = False
+                    print "{0:#x}".format(p)
+                entry = obj.Object("_DNS_HASHTABLE_ENTRY", offset = p, vm = proc_as)
+                if entry.Name:
+                    #cache_name = obj.Object("_LONG_UNICODE_STRING", offset = entry.Name.v(), vm = proc_as)
+                    print "{0:#x} : {1}".format(entry.Name, memstring(entry.Name))
 
             yield guid, pdb
 
@@ -322,3 +407,16 @@ DNSType = {
     "ALL": 0x00ff,
     "ANY": 0x00ff
 }
+
+def memstring(addr):
+    mstr = ""
+    while True:
+        w = proc_as.read(addr, 2)
+        if w == "\x00\x00": return mstr
+        mstr += w
+        addr += 2
+
+
+class NoPDBFileException(Exception):
+    def __init__(self, message):
+        Exception.__init__(self, message)
