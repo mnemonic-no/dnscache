@@ -62,7 +62,9 @@ try:
     import requests
     candownload = True
 except ImportError:
-    debug.info("Missing python library requests. You need to manually provide .PDB file")
+    self.logverbose("Missing python library requests. You need to manually provide .PDB file")
+
+
 
 dnstypes = {
         '_DNS_RECORD_FLAGS' : [ 4, {
@@ -101,6 +103,31 @@ win10_dns_hashtable_entry = {
             }]
         }
 
+class DNSHastableTypesWindows10(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x >= 6,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypes(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x <= 6,
+                  'minor': lambda x: x <= 1, # maybe 3?
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(dns_hashtable_entry)
+
+
 class DNSCache(common.AbstractWindowsCommand):
     """Volatility plugin to extract the Windows DNS cache
 
@@ -118,6 +145,13 @@ class DNSCache(common.AbstractWindowsCommand):
                         Provide path to the cabextract system utility
 
     """
+
+    meta_info = {}
+    meta_info['author']    = 'Geir Skjotskift'
+    meta_info['copyright'] = 'Copyright (c) 2017, mnemonic AS'
+    meta_info['contact']   = 'geir@mnemonic.no'
+    meta_info['license']   = 'ISC License'
+    meta_info['url']       = 'https://mnemonic.no'
 
     def __init__(self, config, *args, **kwargs):
 
@@ -137,6 +171,13 @@ class DNSCache(common.AbstractWindowsCommand):
         config.add_option("CABEXTRACT", default = "cabextract",
                           help = "Provide path to the cabextract system utility",
                           action = "store")
+
+        if self._config.VERBOSE:
+            self.logverbose = debug.info
+
+    def logverbose(self, msg):
+        if self._config.VERBOSE:
+            debug.info(msg)
 
     def _find_dns_resolver(self, ps_list):
 
@@ -166,15 +207,15 @@ class DNSCache(common.AbstractWindowsCommand):
         debug_dir = mod.get_debug_directory()
 
         if not self._is_valid_debug_dir(debug_dir, image_base, addr_space):
-            debug.info("Invalid debug dir {0:#x} {1:#x} {2:#x}".format(debug_dir.v(), image_base.v(), addr_space.v()))
+            self.logverbose("Invalid debug dir {0:#x} {1:#x} {2:#x}".format(debug_dir.v(), image_base.v(), addr_space.v()))
             return
 
-        debug.info("Found debug_dir: {0:#x}, image_base: {1:#x}".format(debug_dir.v(), image_base.v()))
+        self.logverbose("Found debug_dir: {0:#x}, image_base: {1:#x}".format(debug_dir.v(), image_base.v()))
         debug_data = addr_space.zread(image_base + debug_dir.AddressOfRawData, debug_dir.SizeOfData)
         if debug_data[:4] == 'RSDS':
             return pdbparse.peinfo.get_rsds(debug_data)
 
-        debug.info("Found no RSDS")
+        self.logverbose("Found no RSDS")
 
     def _download_pdb_file(self, guid, filename):
 
@@ -184,10 +225,10 @@ class DNSCache(common.AbstractWindowsCommand):
         archive = filename[:-1] + "_"
         url = "{0}/{1}/{2}/{3}".format(self._config.SYMBOLS, filename, guid, archive)
 
-        debug.info("Download URL .PDB file: {0}".format(url))
+        self.logverbose("Download URL .PDB file: {0}".format(url))
 
         if not candownload:
-            debug.info("Manually provide the above resource with the --pdb-file option")
+            self.logverbose("Manually provide the above resource with the --pdb-file option")
             return
 
         proxies = None
@@ -200,7 +241,7 @@ class DNSCache(common.AbstractWindowsCommand):
         resp = requests.get(url, proxies=proxies, stream=True)
 
         if resp.status_code != 200:
-            debug.info("Unable to download {0} (response code: {1})".format(url, resp.get_code()))
+            self.logverbose("Unable to download {0} (response code: {1})".format(url, resp.get_code()))
             return
 
         archive_path = os.path.join(self._config.DUMP_DIR, archive)
@@ -228,7 +269,7 @@ class DNSCache(common.AbstractWindowsCommand):
                 return ""
 
         pdb_file_name = self._get_pdb_filename()
-        debug.info("Using PDB file: {0}".format(pdb_file_name))
+        self.logverbose("Using PDB file: {0}".format(pdb_file_name))
         pdb = pdbparse.parse(self._get_pdb_filename())
         sects = pdb.STREAM_SECT_HDR_ORIG.sections
         omap = pdb.STREAM_OMAP_FROM_SRC
@@ -246,7 +287,6 @@ class DNSCache(common.AbstractWindowsCommand):
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTableSize_p = imgbase+omap.remap(off+virt_base)
-                debug.info("Found hashtable size: {0}".format(off))
             if _sym_name(sym) == "g_CacheHeap":
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
@@ -254,67 +294,55 @@ class DNSCache(common.AbstractWindowsCommand):
 
         return g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p
 
+
     def calculate(self):
 
         address_space = utils.load_as(self._config)
         ps_list = win32.tasks.pslist(address_space)
-        address_space.profile.add_types(dnstypes)
-        address_space.profile.add_types(win10_dns_hashtable_entry)
 
         for proc, mod in self._find_dns_resolver(ps_list):
 
-            debug.info("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
+            self.logverbose("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
 
             proc_as = proc.get_process_address_space()
             guid, pdb = self._get_debug_symbols(proc_as, mod)
             pdb_file = self._download_pdb_file(guid, pdb)
-            debug.info("Using PDB: {0}".format(pdb_file))
+            self.logverbose("Using PDB: {0}".format(pdb_file))
 
             image_base_address = int(proc.Peb.m("ImageBaseAddress"))
             g_HashTable_offset, g_HashTableSize_offset, g_CacheHeap_offset = self._hash_info(pdb_file, mod.DllBase)
-            debug.info("DllBase:         {0:#x}".format(mod.DllBase))
-            debug.info("Offset g_CacheHeap:     {0:#x}".format(g_CacheHeap_offset))
-            debug.info("Offset g_HashTable:     {0:#x}".format(g_HashTable_offset))
+            self.logverbose("DllBase:                {0:#x}".format(mod.DllBase))
+            self.logverbose("Offset g_CacheHeap:     {0:#x}".format(g_CacheHeap_offset))
+            self.logverbose("Offset g_HashTable:     {0:#x}".format(g_HashTable_offset))
 
             g_HashTableSize = obj.Object('unsigned int', offset = g_HashTableSize_offset, vm = proc_as)
 
-            debug.info("g_HashTableSize: {0:#x}".format(g_HashTableSize))
+            self.logverbose("g_HashTableSize:        {0:#x}".format(g_HashTableSize))
 
             g_CacheHeap_p = obj.Object("Pointer", offset = g_CacheHeap_offset, vm = proc_as)
             g_HashTable_p = obj.Object("Pointer", offset = g_HashTable_offset, vm = proc_as)
 
-            debug.info("g_CacheHeap_p: {0:#x}".format(g_CacheHeap_p.v()))
-            debug.info("g_HashTable_p: {0:#x}".format(g_HashTable_p.v()))
+            self.logverbose("g_CacheHeap_p:          {0:#x}".format(g_CacheHeap_p.v()))
+            self.logverbose("g_HashTable_p:          {0:#x}".format(g_HashTable_p.v()))
 
             dnscache = obj.Object("Array", targetType="Pointer", count = g_HashTableSize + 1, offset = g_HashTable_p, vm = proc_as)
-            lastNull = False
-            c = 0
             for p in dnscache:
-                if p == 0 and not lastNull:
-                    print "{0:#x}".format(p)
-                    lastNull = True
-                elif p == 0 and lastNull:
-                    c += 1
-                else:
-                    print "*", c
-                    c = 0
-                    lastNull = False
-                    print "{0:#x}".format(p)
                 entry = obj.Object("_DNS_HASHTABLE_ENTRY", offset = p, vm = proc_as)
                 if entry.Name:
-                    #cache_name = obj.Object("_LONG_UNICODE_STRING", offset = entry.Name.v(), vm = proc_as)
-                    print "{0:#x} : {1}".format(entry.Name, memstring(offset = entry.Name, vm = proc_as))
-
-            yield guid, pdb
+                    yield entry.v(), memstring(offset = entry.Name, vm = proc_as), "HASH", "{0:#x}".format(entry.Record.v())
 
     def render_text(self, outfd, data):
 
         if self._config.DUMP_DIR == None and self._config.PDB_FILE == None:
             debug.error("Please specify a dump directory (--dump_dir)")
 
-        outfd.write("DEBUG!***\n")
-        for guid, pdb in data:
-            outfd.write("DEBUG -- GUID: {0}, PDB: {1}\n".format(guid, pdb))
+        self.table_header(outfd, [("Offset",  '#018x'),
+            ('Name', '<32'),
+            ('Type', '<6'),
+            ('Value', '')])
+
+        for offset, name, recordtype, value in data:
+            self.table_row(outfd, offset, name, recordtype,value)
 
 
 class IPv4DWORD(object):
@@ -412,7 +440,7 @@ def memstring(offset = 0, vm = None):
     mstr = ""
     while True:
         w = vm.read(offset, 2)
-        if w == "\x00\x00": return mstr
+        if w == "\x00\x00": return mstr.decode("utf-16")
         mstr += w
         offset += 2
 
