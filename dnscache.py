@@ -67,24 +67,27 @@ except ImportError:
 
 
 dnstypes = {
-        '_DNS_RECORD_FLAGS' : [ 4, {
-            'Section'         : [ 0, ['BitField', dict(start_bit = 0, end_bit = 2)]],
-            'Delete'          : [ 0, ['BitField', dict(start_bit = 2, end_bit = 3)]],
-            'CharSet'         : [ 0, ['BitField', dict(start_bit = 3, end_bit = 5)]],
-            'Unused'          : [ 0, ['BitField', dict(start_bit = 5, end_bit = 8)]],
-            'Reserved'        : [ 0, ['BitField', dict(start_bit = 8, end_bit = 32)]],
-            } ],
+        '_DNS_RECORD' : [ None, {
+            'pNext'       : [ 0x00, ['pointer', ['_DNS_RECORD']]],
+            'pName'       : [ 0x08, ['pointer', ['unsigned short']]],
+            'wType'       : [ 0x10, ['unsigned short']],
+            'wDataLength' : [ 0x12, ['unsigned short']],
+            'dwFlags'     : [ 0x14, ['unsigned long']],
+            'dwTTL'       : [ 0x18, ['unsigned long']],
+            'Data'        : [ 0x20, ['unsigned long']], # this can be various size, depends on datalength
+            } ]
+        }
 
+WinXPx86_DNS_TYPES = {
         '_DNS_RECORD' : [ None, {
             'pNext'       : [ 0x00, ['pointer', ['_DNS_RECORD']]],
             'pName'       : [ 0x04, ['pointer', ['unsigned short']]],
             'wType'       : [ 0x08, ['unsigned short']],
             'wDataLength' : [ 0x0a, ['unsigned short']],
-            'Flags'       : [ 0x0c, ['_DNS_RECORD_FLAGS']],
-            'dwTtl'       : [ 0x10, ['unsigned long']],
-            'dwReserved'  : [ 0x14, ['unsigned long']],
-            'Data'        : [ 0x18, ['unsigned long']], # this can be various size, depends on datalength
-            } ]
+            'dwFlags'     : [ 0x0c, ['unsigned long']],
+            'dwTTL'       : [ 0x10, ['unsigned long']],
+            'Data'        : [ 0x18, ['unsigned long']],
+            }]
         }
 
 dns_hashtable_entry = {
@@ -103,10 +106,20 @@ win10_dns_hashtable_entry = {
             }]
         }
 
-class DNSHastableTypesWindows10(obj.ProfileModification):
+WinXPx86_dns_hashtable_entry = {
+        '_DNS_HASHTABLE_ENTRY' : [ None, {
+            'List'   : [ 0x00, ['pointer', ['_LIST_ENTRY']]],
+            'Name'   : [ 0x04, ['pointer', ['_UNICODE_STRING']]],
+            'Record' : [ 0x10, ['pointer', ['_DNS_RECRD']]],
+            }]
+        }
+
+
+
+class DNSHastableTypesWindows10_and_2016(obj.ProfileModification):
 
     conditions = {'os'   : lambda x: x == 'windows',
-                  'major': lambda x: x >= 6,
+                  'major': lambda x: x == 10,
                   }
 
     def modification(self, profile):
@@ -115,17 +128,82 @@ class DNSHastableTypesWindows10(obj.ProfileModification):
         profile.vtypes.update(win10_dns_hashtable_entry)
 
 
-class DNSHastableTypes(obj.ProfileModification):
+class DNSHastableTypesWindows81_2012R2(obj.ProfileModification):
 
     conditions = {'os'   : lambda x: x == 'windows',
-                  'major': lambda x: x <= 6,
-                  'minor': lambda x: x <= 1, # maybe 3?
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 3,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypesWindows8_2012(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 2,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypesWindows7_2008R2(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 1,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypesWindowsVista_2008(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 0,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypesOld(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x <= 5,
+                  'memory_model': lambda x: x == '64bit',
                   }
 
     def modification(self, profile):
 
         profile.vtypes.update(dnstypes)
         profile.vtypes.update(dns_hashtable_entry)
+
+
+class DNSHastableTypesOldx86(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x <= 5,
+                  'memory_model': lambda x: x == '32bit',
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(WinXPx86_DNS_TYPES)
+        profile.vtypes.update(WinXPx86_dns_hashtable_entry)
 
 
 class DNSCache(common.AbstractWindowsCommand):
@@ -174,6 +252,9 @@ class DNSCache(common.AbstractWindowsCommand):
 
         if self._config.VERBOSE:
             self.logverbose = debug.info
+        self.cache_found = False
+        self.pid = 0
+        self.dllname = ""
 
     def logverbose(self, msg):
         if self._config.VERBOSE:
@@ -188,15 +269,19 @@ class DNSCache(common.AbstractWindowsCommand):
 
     def _is_valid_debug_dir(self, debug_dir, image_base, addr_space):
         if debug_dir == None:
+            self.logverbose("debug_dir is None")
             return False
 
         if debug_dir.AddressOfRawData == 0:
+            self.logverbose("debug_dir == 0")
             return False
 
         if not addr_space.is_valid_address(image_base + debug_dir.AddressOfRawData):
+            self.logverbose("Invalid address: {0:#x}".format(image_base + debug_dir.AddressOfRawData))
             return False
 
         if not addr_space.is_valid_address(image_base + debug_dir.AddressOfRawData + debug_dir.SizeOfData - 1):
+            self.logverbose("Debug data outside valid address space: {0:#x}".format(image_base + debug_dir.AddressOfRawData + debug_dir.SizeOfData - 1))
             return False
 
         return True
@@ -207,8 +292,8 @@ class DNSCache(common.AbstractWindowsCommand):
         debug_dir = mod.get_debug_directory()
 
         if not self._is_valid_debug_dir(debug_dir, image_base, addr_space):
-            self.logverbose("Invalid debug dir {0:#x} {1:#x} {2:#x}".format(debug_dir.v(), image_base.v(), addr_space.v()))
-            return
+            self.logverbose("Invalid debug dir {0:#x} {1:#x}".format(debug_dir.v(), image_base.v()))
+            return None, None
 
         self.logverbose("Found debug_dir: {0:#x}, image_base: {1:#x}".format(debug_dir.v(), image_base.v()))
         debug_data = addr_space.zread(image_base + debug_dir.AddressOfRawData, debug_dir.SizeOfData)
@@ -216,6 +301,7 @@ class DNSCache(common.AbstractWindowsCommand):
             return pdbparse.peinfo.get_rsds(debug_data)
 
         self.logverbose("Found no RSDS")
+        return None, None
 
     def _download_pdb_file(self, guid, filename):
 
@@ -279,21 +365,20 @@ class DNSCache(common.AbstractWindowsCommand):
         g_CacheHeap_p = 0
 
         for sym in pdb.STREAM_GSYM.globals:
-            if _sym_name(sym) == "g_HashTable":
+            if _sym_name(sym).endswith("g_HashTable"):
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTable_p = imgbase+omap.remap(off+virt_base)
-            if _sym_name(sym) == "g_HashTableSize":
+            if _sym_name(sym).endswith("g_HashTableSize"):
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_HashTableSize_p = imgbase+omap.remap(off+virt_base)
-            if _sym_name(sym) == "g_CacheHeap":
+            if _sym_name(sym).endswith("g_CacheHeap"):
                 off = sym.offset
                 virt_base = sects[sym.segment-1].VirtualAddress
                 g_CacheHeap_p = imgbase+omap.remap(off+virt_base)
 
         return g_HashTable_p, g_HashTableSize_p, g_CacheHeap_p
-
 
     def calculate(self):
 
@@ -303,9 +388,14 @@ class DNSCache(common.AbstractWindowsCommand):
         for proc, mod in self._find_dns_resolver(ps_list):
 
             self.logverbose("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
+            self.pid = proc.UniqueProcessId
+            self.dllname = str(mod.m("FullDllName"))
 
             proc_as = proc.get_process_address_space()
             guid, pdb = self._get_debug_symbols(proc_as, mod)
+            if not guid:
+                self.logverbose("No Debug symbols found")
+                continue
             pdb_file = self._download_pdb_file(guid, pdb)
             self.logverbose("Using PDB: {0}".format(pdb_file))
 
@@ -329,7 +419,32 @@ class DNSCache(common.AbstractWindowsCommand):
             for p in dnscache:
                 entry = obj.Object("_DNS_HASHTABLE_ENTRY", offset = p, vm = proc_as)
                 if entry.Name:
-                    yield entry.v(), memstring(offset = entry.Name, vm = proc_as), "HASH", "{0:#x}".format(entry.Record.v())
+                    self.cache_found = True
+                    yield entry.v(), memstring(offset = entry.Name, vm = proc_as), "HASH", "{0:#x}".format(entry.Record.v()), ""
+                    record = obj.Object("_DNS_RECORD", offset = entry.Record.v(), vm = proc_as)
+                    runaway_count = 0
+                    while True:
+                        if record.wType == DNSType["A"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "A", str(IPv4DWORD(record.Data)), record.dwTTL
+                        elif record.wType == DNSType["CNAME"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "CNAME", memstring(record.Data.v()), record.dwTTL
+                        elif record.wType == DNSType["SRV"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "SRV", memstring(record.Data.v()), record.dwTTL
+                        elif record.wType == DNSType["MX"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "MX", memstring(record.Data.v()), record.dwTTL
+                        elif record.wType == DNSType["NS"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "NS", memstring(record.Data.v()), record.dwTTL
+                        elif record.wType == DNSType["ALL"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "ALL", memstring(record.Data.v()), record.dwTTL
+                            #elif record.wType == DNSType["AAAA"]:
+                            #    pass # HANDLE AAAA
+                        else:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), val_to_type(record.wType), "(catch all, value not interpreted)", record.dwTTL
+
+                        if not record.pNext or runaway_count > 100:
+                            break
+                        runaway_count += 1
+                        record = obj.Object("_DNS_RECORD", offset = record.pNext, vm = proc_as)
 
     def render_text(self, outfd, data):
 
@@ -338,11 +453,17 @@ class DNSCache(common.AbstractWindowsCommand):
 
         self.table_header(outfd, [("Offset",  '#018x'),
             ('Name', '<32'),
+            ('TTL',  '>8'),
             ('Type', '<6'),
             ('Value', '')])
 
-        for offset, name, recordtype, value in data:
-            self.table_row(outfd, offset, name, recordtype,value)
+        for offset, name, recordtype, value, ttl in data:
+            self.table_row(outfd, offset, name, ttl, recordtype, value)
+
+        outfd.write("-------------------------\n")
+        outfd.write("PID: {0}, DLL: {1}\n".format(self.pid, self.dllname))
+        if not self.cache_found:
+            outfd.write("No cache found. dnsrslvr.dll paged?\n")
 
 
 class IPv4DWORD(object):
@@ -378,10 +499,16 @@ DNSPType = {
     "ADDITIONAL": 3
 }
 
+def val_to_type(value):
+    for key,val in DNSType.items():
+        if value == val:
+            return key
+    return "UNKOWN"
+
 # DNS Record Type Enumeration
 DNSType = {
     "A": 0x0001,
-    "NS_TYPE_NS": 0x0002,
+    "NS": 0x0002,
     "MD": 0x0003,
     "MF": 0x0004,
     "CNAME": 0x0005,
@@ -438,9 +565,12 @@ DNSType = {
 
 def memstring(offset = 0, vm = None):
     mstr = ""
+    if not vm:
+        return mstr.decode("utf-16")
     while True:
         w = vm.read(offset, 2)
         if w == "\x00\x00": return mstr.decode("utf-16")
+        if not w: return mstr.decode("utf-16")
         mstr += w
         offset += 2
 
