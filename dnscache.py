@@ -44,6 +44,13 @@ REFERENCES:
     [5] Levy, J. (2015). dns cache plugin #201 (Volatility Issiues)
         Retrieved from:
           https://github.com/volatilityfoundation/volatility/issues/201
+
+DEBUG:
+    NameError: name 'ULInt32' is not defined #31
+    --------------------------------------------
+    $ pip install construct==2.5.5-reupload
+    Retrieved from:
+      https://github.com/moyix/pdbparse/issues/31
 """
 
 import os
@@ -51,6 +58,7 @@ import pdbparse
 import pdbparse.peinfo
 import shutil
 import subprocess
+import sys
 import volatility.debug as debug
 import volatility.obj as obj
 import volatility.plugins.common as common
@@ -75,7 +83,7 @@ dnstypes = {
             'dwFlags'     : [ 0x14, ['unsigned long']],
             'dwTTL'       : [ 0x18, ['unsigned long']],
             'Data'        : [ 0x20, ['unsigned long']], # this can be various size, depends on datalength
-            } ]
+            } ],
         }
 
 WinXPx86_DNS_TYPES = {
@@ -87,7 +95,7 @@ WinXPx86_DNS_TYPES = {
             'dwFlags'     : [ 0x0c, ['unsigned long']],
             'dwTTL'       : [ 0x10, ['unsigned long']],
             'Data'        : [ 0x18, ['unsigned long']],
-            }]
+            } ],
         }
 
 dns_hashtable_entry = {
@@ -116,10 +124,23 @@ WinXPx86_dns_hashtable_entry = {
 
 
 
-class DNSHastableTypesWindows10_and_2016(obj.ProfileModification):
+class DNSHastableTypesWindows10_and_2016_10(obj.ProfileModification):
 
     conditions = {'os'   : lambda x: x == 'windows',
                   'major': lambda x: x == 10,
+                  }
+
+    def modification(self, profile):
+
+        profile.vtypes.update(dnstypes)
+        profile.vtypes.update(win10_dns_hashtable_entry)
+
+
+class DNSHastableTypesWindows10_and_2016(obj.ProfileModification):
+
+    conditions = {'os'   : lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 4,
                   }
 
     def modification(self, profile):
@@ -357,8 +378,15 @@ class DNSCache(common.AbstractWindowsCommand):
         pdb_file_name = self._get_pdb_filename()
         self.logverbose("Using PDB file: {0}".format(pdb_file_name))
         pdb = pdbparse.parse(self._get_pdb_filename())
-        sects = pdb.STREAM_SECT_HDR_ORIG.sections
-        omap = pdb.STREAM_OMAP_FROM_SRC
+        try:
+            sects = pdb.STREAM_SECT_HDR_ORIG.sections
+            omap = pdb.STREAM_OMAP_FROM_SRC
+        except AttributeError as err:
+            # In this case there is no OMAP, so we use the given section
+            # headers and use the identity function for omap.remap
+            sects = pdb.STREAM_SECT_HDR.sections
+            omap = DummyOmap()
+
 
         g_HashTable_p = 0
         g_HashTableSize_p = 0
@@ -383,9 +411,15 @@ class DNSCache(common.AbstractWindowsCommand):
     def calculate(self):
 
         address_space = utils.load_as(self._config)
+
+        metadata = address_space.profile.metadata
+        version = (metadata.get("major", 0), metadata.get("minor", 0), metadata.get("memory_model", ""))
+        self.logverbose("major, minor, memory_model: {0}".format(version))
+
         ps_list = win32.tasks.pslist(address_space)
 
         for proc, mod in self._find_dns_resolver(ps_list):
+
 
             self.logverbose("Found PID: {0} Dll: {1}".format(proc.UniqueProcessId, str(mod.m("FullDllName"))))
             self.pid = proc.UniqueProcessId
@@ -426,20 +460,16 @@ class DNSCache(common.AbstractWindowsCommand):
                     while True:
                         if record.wType == DNSType["A"]:
                             yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "A", str(IPv4DWORD(record.Data)), record.dwTTL
-                        elif record.wType == DNSType["CNAME"]:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "CNAME", memstring(record.Data.v()), record.dwTTL
-                        elif record.wType == DNSType["SRV"]:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "SRV", memstring(record.Data.v()), record.dwTTL
-                        elif record.wType == DNSType["MX"]:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "MX", memstring(record.Data.v()), record.dwTTL
-                        elif record.wType == DNSType["NS"]:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "NS", memstring(record.Data.v()), record.dwTTL
+                        elif PTR_DATA.has_key(record.wType.v()): # all types where data is a pointer to a string
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), PTR_DATA[record.wType.v()], dnspstr(record=record, vm = proc_as), record.dwTTL
                         elif record.wType == DNSType["ALL"]:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "ALL", memstring(record.Data.v()), record.dwTTL
-                            #elif record.wType == DNSType["AAAA"]:
-                            #    pass # HANDLE AAAA
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "ALL", dnspstr(record = record, vm = proc_as), record.dwTTL
+                        elif record.wType == DNSType["AAAA"]:
+                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), "AAAA", memipv6(offset = record.Data.obj_offset, vm = proc_as), record.dwTTL
                         else:
-                            yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), val_to_type(record.wType), "(catch all, value not interpreted)", record.dwTTL
+                            val = val_to_type(record.wType)
+                            if val != "UNKNOWN": # Try to print old hashes with overwrites.
+                                yield record.v(), str(memstring(offset = record.pName, vm = proc_as)), val, "(catch all, value not interpreted)", record.dwTTL
 
                         if not record.pNext or runaway_count > 100:
                             break
@@ -452,7 +482,7 @@ class DNSCache(common.AbstractWindowsCommand):
             debug.error("Please specify a dump directory (--dump_dir)")
 
         self.table_header(outfd, [("Offset",  '#018x'),
-            ('Name', '<32'),
+            ('Name', '<64'),
             ('TTL',  '>8'),
             ('Type', '<6'),
             ('Value', '')])
@@ -503,7 +533,20 @@ def val_to_type(value):
     for key,val in DNSType.items():
         if value == val:
             return key
-    return "UNKOWN"
+    return "UNKNOWN"
+
+PTR_DATA = {
+        0x0002: "NS",
+        0x0003: "MD",
+        0x0004: "MF",
+        0x0005: "CNAME",
+        0x0007: "MB",
+        0x0008: "MG",
+        0x0009: "MR",
+        0x000c: "PTR",
+        0x0021: "SRV",
+        0x0027: "DNAME",
+        }
 
 # DNS Record Type Enumeration
 DNSType = {
@@ -564,16 +607,31 @@ DNSType = {
 }
 
 def memstring(offset = 0, vm = None):
-    mstr = ""
-    if not vm:
-        return mstr.decode("utf-16")
-    while True:
-        w = vm.read(offset, 2)
-        if w == "\x00\x00": return mstr.decode("utf-16")
-        if not w: return mstr.decode("utf-16")
-        mstr += w
-        offset += 2
+    if not offset or not vm:
+        return ""
+    return str(obj.Object("String", offset = offset, vm = vm, encoding = 'utf16', length = 0x7FFF))
 
+
+def dnspstr(record = None, vm = None):
+    if not record or not vm:
+        return "dnspstr: None"
+    offset = record.Data.obj_offset
+    pstr = obj.Object('Pointer', offset = offset, vm = vm)
+    return memstring(pstr, vm)
+
+
+def memipv6(offset = 0, vm = None):
+    mstr = ""
+    data = vm.zread(offset, 16)
+    for i, c in enumerate(data):
+        if i > 0 and i % 2 == 0:
+            mstr += ":"
+        mstr += "{0:02x}".format(ord(c))
+    return mstr
+
+class DummyOmap(object):
+    def remap(self, addr):
+	return addr
 
 class NoPDBFileException(Exception):
     def __init__(self, message):
