@@ -13,4 +13,4 @@ $ pip install construct==2.5.5-reupload
 
 ## No cache found. dnsrslvr.dll paged?
 
-This is not a *bug* but a result of the DNS file being paged to disk. This happens quite often in my test cases. The solution is either to provide the pagefile to or to aquire the dnsrslvr.dll from disk and manually finding the GUID/age and .pdb file path and download the file from microsoft and provide it with the --pdf_file= option.
+This is not a *bug* but a result of the dll being paged to disk. This happens quite often in my test cases. The solution may be to aquire the dnsrslvr.dll from disk providing this to the plugin with --dll_file=FILENAME .. If you are lucky; the pointer to the cache is still in memory.
