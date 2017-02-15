@@ -39,7 +39,7 @@ e.g.
 
 ## Requirements
 
-* construct (pdbparse dependency) (Feb. 12 2017, see BUGS.md)
+* construct (pdbparse dependency) (Feb. 12 2017, see [BUGS.md](BUGS.md))
 * pefile
 * pdbparse
 * requests
