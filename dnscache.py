@@ -1,6 +1,6 @@
 # ISC License
 #
-# Copyright (c) 2017, mnemonic AS <geir@mnemonic.no>
+# Copyright (c) 2017, mnemonic AS <opensource@mnemonic.no>
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -18,7 +18,7 @@
 
 @author:        Geir Skjotskift
 @license:       ISC License
-@contact:       geir@mnemonic.no
+@contact:       opensource@mnemonic.no
 
 DEPENDENCIES:
     construct (pdbparse dependency)
