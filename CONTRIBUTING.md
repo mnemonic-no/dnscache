@@ -2,7 +2,7 @@
 
 #### **Did you find a bug?**
 
-* **Ensure the bug was not already reported** by searching on GitHub under Issues
+* **Ensure the bug was not already reported** by searching on GitHub under [Issues](https://github.com/mnemonic-no/dnscache/issues)
 
 * If you're unable to find an open issue addressing the problem, open a new one. Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** and/or an **--verbose output** demonstrating the bug.
 

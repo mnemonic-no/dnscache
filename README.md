@@ -28,22 +28,27 @@ The plugin will provide more information if the volatility --verbose flag is set
 
 ## Installation
 
-`% python setup.py install`
+Copy the dnscache.py to your plugins directory or point volatility to your checkout directory
+
+e.g.
+
+`% vol.py --plugins=/home/geir/src/dnscache dnscache`
 
 ## Requirements
 
 * construct (pdbparse dependency) (Feb. 12 2017, see BUGS.md)
+* pefile
 * pdbparse
 * requests
 * cabextract (system utility)
 
 ## Known issues
 
-See the BUGS.md file.
+See the [BUGS.md](BUGS.md) file.
 
 ## Contributing
 
-See the CONTRIBUTING.md file.
+See the [CONTRIBUTING.md](CONTRIBUTING.md) file.
 
 ## Credits
 
