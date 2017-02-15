@@ -20,6 +20,9 @@ The plugin will try to download the .pdb file from microsoft for the dnsrslvr.dl
                           provide the reference on the command line
       --cabextract=cabextract
                           Provide path to the cabextract system utility
+      --dll_file=DLL_FILE
+                          Provide dnsrslvr.dll from the file system.
+
 </pre>
 
 The plugin will provide more information if the volatility --verbose flag is set (among other things, this will output the download link for the .pdb file if the dnsrslvr.dll is not paged)
