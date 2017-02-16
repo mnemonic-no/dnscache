@@ -247,7 +247,7 @@ class DNSCache(common.AbstractWindowsCommand):
     meta_info = {}
     meta_info['author']    = 'Geir Skjotskift'
     meta_info['copyright'] = 'Copyright (c) 2017, mnemonic AS'
-    meta_info['contact']   = 'geir@mnemonic.no'
+    meta_info['contact']   = 'opensource@mnemonic.no'
     meta_info['license']   = 'ISC License'
     meta_info['url']       = 'https://mnemonic.no'
 
