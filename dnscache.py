@@ -350,7 +350,7 @@ class DNSCache(common.AbstractWindowsCommand):
 
         if resp.status_code != 200:
             self.logverbose("Unable to download {0} (response code: {1})".format(url, resp.status_code))
-            return
+            return None
 
         archive_path = os.path.join(self._config.DUMP_DIR, archive)
 
@@ -436,7 +436,14 @@ class DNSCache(common.AbstractWindowsCommand):
             if not guid:
                 self.logverbose("No Debug symbols found")
                 continue
+
             pdb_file = self._download_pdb_file(guid, pdb)
+            if not pdb_file:
+                pdb_file = self._download_pdb_file(guid.upper(), pdb)
+            if not pdb_file:
+                print "Error downloading PDB"
+                return
+
             self.logverbose("Using PDB: {0}".format(pdb_file))
 
             image_base_address = int(proc.Peb.m("ImageBaseAddress"))
