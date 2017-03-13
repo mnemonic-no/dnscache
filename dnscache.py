@@ -349,7 +349,7 @@ class DNSCache(common.AbstractWindowsCommand):
         resp = requests.get(url, proxies=proxies, stream=True)
 
         if resp.status_code != 200:
-            self.logverbose("Unable to download {0} (response code: {1})".format(url, resp.get_code()))
+            self.logverbose("Unable to download {0} (response code: {1})".format(url, resp.status_code))
             return
 
         archive_path = os.path.join(self._config.DUMP_DIR, archive)
